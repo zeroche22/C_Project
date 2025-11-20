@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -std=c99 -g
-SRC = main/main_keylogger.c
+CFLAGS = -std=c99 -Iinclude
+SRC = src/cJSON.c
 
 all: main_keylogger
 
