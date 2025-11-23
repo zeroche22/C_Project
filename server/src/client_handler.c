@@ -11,23 +11,25 @@
 #define BUF_SIZE 10000
 
 void handle_client(int client_sock, const char *ip) {
-
     storage_ensure_client_dirs(ip);
 
-    int index = storage_get_next_index(ip);
+    while (1) {
+        char buffer[BUF_SIZE];
+        int len = recv(client_sock, buffer, sizeof(buffer) - 1, 0);
 
-    char buffer[BUF_SIZE];
-    int len = recv(client_sock, buffer, sizeof(buffer) - 1, 0);
+        if (len <= 0) {
+            break;
+        }
 
-    if (len <= 0)
-        return;
+        buffer[len] = '\0';
 
-    buffer[len] = '\0';
+        int index = storage_get_next_index(ip);
+        storage_save_raw(ip, index, buffer, len);
 
-    storage_save_raw(ip, index, buffer, len);
-
-    char text[BUF_SIZE];
-    extract_text_from_json(buffer, text, sizeof(text));
-
-    analyze_text_and_store(ip, index, text);
+        char text[BUF_SIZE];
+        extract_text_from_json(buffer, text, sizeof(text));
+        analyze_text_and_store(ip, index, text);
+    }
+    
+    close(client_sock);
 }
