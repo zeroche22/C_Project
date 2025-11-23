@@ -10,6 +10,7 @@
 
 #include "server.h"
 #include "storage.h"
+#include "client_handler.h"
 
 #define DEFAULT_PORT "8080"
 #define BASE_DIR "data/clients"
@@ -19,10 +20,9 @@ struct client_info {
     char ip[INET_ADDRSTRLEN];
 };
 
-void handle_client(int client_sock, const char *client_ip);
-
 static void *client_thread(void *arg) {
     struct client_info *info = (struct client_info *)arg;
+
     int sock = info->sock;
     char ip[INET_ADDRSTRLEN];
     strncpy(ip, info->ip, sizeof(ip));
@@ -30,7 +30,9 @@ static void *client_thread(void *arg) {
     free(info);
 
     printf("[+] Client connected: %s\n", ip);
+
     handle_client(sock, ip);
+
     printf("[-] Client disconnected: %s\n", ip);
     return NULL;
 }
@@ -42,11 +44,6 @@ void run_server(const char *port_str) {
         exit(EXIT_FAILURE);
     }
 
-    if (storage_init_base(BASE_DIR) != 0) {
-        fprintf(stderr, "Failed to init storage base dir\n");
-        exit(EXIT_FAILURE);
-    }
-
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) {
         perror("socket");
@@ -54,17 +51,13 @@ void run_server(const char *port_str) {
     }
 
     int opt = 1;
-    if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt");
-        close(listen_fd);
-        exit(EXIT_FAILURE);
-    }
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
+    addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port        = htons((uint16_t)port);
+    addr.sin_port = htons((uint16_t)port);
 
     if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         perror("bind");
@@ -80,9 +73,10 @@ void run_server(const char *port_str) {
 
     printf("server listening on port %d\n", port);
 
-    for (;;) {
+    while (1) {
         struct sockaddr_in cli_addr;
         socklen_t cli_len = sizeof(cli_addr);
+
         int client_fd = accept(listen_fd, (struct sockaddr *)&cli_addr, &cli_len);
         if (client_fd < 0) {
             perror("accept");
@@ -97,12 +91,8 @@ void run_server(const char *port_str) {
         }
 
         info->sock = client_fd;
-        if (!inet_ntop(AF_INET, &cli_addr.sin_addr, info->ip, sizeof(info->ip))) {
-            perror("inet_ntop");
-            close(client_fd);
-            free(info);
-            continue;
-        }
+        inet_ntop(AF_INET, &cli_addr.sin_addr,
+                  info->ip, sizeof(info->ip));
 
         pthread_t tid;
         if (pthread_create(&tid, NULL, client_thread, info) != 0) {
@@ -111,22 +101,21 @@ void run_server(const char *port_str) {
             free(info);
             continue;
         }
+
         pthread_detach(tid);
     }
 
     close(listen_fd);
 }
 
-void storage_cleanup(void) {
-    if (g_base_dir) {
-        free(g_base_dir);
-        g_base_dir = NULL;
-    }
-}
-
 int main(int argc, char *argv[]) {
     const char *port = (argc > 1) ? argv[1] : DEFAULT_PORT;
+    if (storage_init_base("data/clients") != 0) {
+    fprintf(stderr, "Storage init failed\n");
+    return 1;
+}
     run_server(port);
+
     storage_cleanup();
     return 0;
 }
