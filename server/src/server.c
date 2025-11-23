@@ -117,8 +117,16 @@ void run_server(const char *port_str) {
     close(listen_fd);
 }
 
+void storage_cleanup(void) {
+    if (g_base_dir) {
+        free(g_base_dir);
+        g_base_dir = NULL;
+    }
+}
+
 int main(int argc, char *argv[]) {
     const char *port = (argc > 1) ? argv[1] : DEFAULT_PORT;
     run_server(port);
+    storage_cleanup();
     return 0;
 }
