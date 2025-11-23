@@ -1,222 +1,121 @@
-#include <arpa/inet.h>
-#include <errno.h>
-#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/types.h>
+#include <errno.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <pthread.h>
 
-#include "analysis.h"
 #include "server.h"
+#include "storage.h"
+#include "client_handler.h"
 
-#define TCP_PORT 8080
-#define BUFFER_SIZE 1024
-#define LINE_BUFFER 2048
-#define DATA_DIR "data"
+#define DEFAULT_PORT "8080"
+#define BASE_DIR "data/clients"
 
-static int ensure_data_directory(void) {
-    struct stat st;
-    if (stat(DATA_DIR, &st) == -1) {
-        if (mkdir(DATA_DIR, 0755) == -1) {
-            perror("mkdir data");
-            return -1;
-        }
-    } else if (!S_ISDIR(st.st_mode)) {
-        fprintf(stderr, "%s exists but is not a directory\n", DATA_DIR);
-        return -1;
-    }
-    return 0;
+struct client_info {
+    int sock;
+    char ip[INET_ADDRSTRLEN];
+};
+
+static void *client_thread(void *arg) {
+    struct client_info *info = (struct client_info *)arg;
+
+    int sock = info->sock;
+    char ip[INET_ADDRSTRLEN];
+    strncpy(ip, info->ip, sizeof(ip));
+    ip[sizeof(ip) - 1] = '\0';
+    free(info);
+
+    printf("[+] Client connected: %s\n", ip);
+
+    handle_client(sock, ip);
+
+    printf("[-] Client disconnected: %s\n", ip);
+    return NULL;
 }
 
-static int append_line_to_file(const char *path, const char *line) {
-    FILE *fp = fopen(path, "a");
-    if (!fp) {
-        perror("fopen append");
-        return -1;
-    }
-    fputs(line, fp);
-    fputc('\n', fp);
-    fclose(fp);
-    return 0;
-}
-
-static char *extract_json_value(const char *json, const char *key) {
-    if (!json || !key) {
-        return NULL;
+void run_server(const char *port_str) {
+    int port = atoi(port_str);
+    if (port <= 0 || port > 65535) {
+        fprintf(stderr, "Invalid port: %s\n", port_str);
+        exit(EXIT_FAILURE);
     }
 
-    char pattern[128];
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    const char *key_pos = strstr(json, pattern);
-    if (!key_pos) {
-        return NULL;
-    }
-
-    const char *colon = strchr(key_pos + strlen(pattern), ':');
-    if (!colon) {
-        return NULL;
-    }
-
-    const char *cursor = colon + 1;
-    while (*cursor == ' ' || *cursor == '\t') {
-        cursor++;
-    }
-
-    if (*cursor != '"') {
-        return NULL;
-    }
-    cursor++;
-
-    const char *start = cursor;
-    while (*cursor && *cursor != '"') {
-        if (*cursor == '\\' && *(cursor + 1) != '\0') {
-            cursor += 2;
-            continue;
-        }
-        cursor++;
-    }
-
-    if (*cursor != '"') {
-        return NULL;
-    }
-
-    size_t len = (size_t)(cursor - start);
-    char *value = malloc(len + 1);
-    if (!value) {
-        return NULL;
-    }
-
-    size_t out = 0;
-    for (const char *p = start; p < start + len; ++p) {
-        if (*p == '\\' && (p + 1) < (start + len)) {
-            ++p;
-            switch (*p) {
-                case '\"':
-                    value[out++] = '"';
-                    break;
-                case '\\':
-                    value[out++] = '\\';
-                    break;
-                case 'n':
-                    value[out++] = '\n';
-                    break;
-                case 't':
-                    value[out++] = '\t';
-                    break;
-                default:
-                    value[out++] = *p;
-                    break;
-            }
-        } else {
-            value[out++] = *p;
-        }
-    }
-
-    value[out] = '\0';
-    return value;
-}
-
-static void handle_line(const char *line, const char *client_ip) {
-    if (!line || !client_ip) {
-        return;
-    }
-
-    if (ensure_data_directory() != 0) {
-        return;
-    }
-
-    char filepath[256];
-    snprintf(filepath, sizeof(filepath), "%s/%s.json", DATA_DIR, client_ip);
-    append_line_to_file(filepath, line);
-
-    char *message = extract_json_value(line, "message");
-    if (message) {
-        save_match_context(client_ip, message);
-        free(message);
-    }
-}
-
-int start_tcp_server(void) {
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
+    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd < 0) {
         perror("socket");
-        return -1;
+        exit(EXIT_FAILURE);
     }
 
     int opt = 1;
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt");
-        close(server_fd);
-        return -1;
-    }
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(TCP_PORT);
+    addr.sin_port = htons((uint16_t)port);
 
-    if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         perror("bind");
-        close(server_fd);
-        return -1;
+        close(listen_fd);
+        exit(EXIT_FAILURE);
     }
 
-    if (listen(server_fd, 10) < 0) {
+    if (listen(listen_fd, 16) < 0) {
         perror("listen");
-        close(server_fd);
-        return -1;
+        close(listen_fd);
+        exit(EXIT_FAILURE);
     }
 
-    printf("TCP server listening on port %d\n", TCP_PORT);
-
-    char line_buffer[LINE_BUFFER];
-    size_t line_len = 0;
-    char recv_buffer[BUFFER_SIZE];
+    printf("server listening on port %d\n", port);
 
     while (1) {
-        struct sockaddr_in client_addr;
-        socklen_t client_len = sizeof(client_addr);
-        int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+        struct sockaddr_in cli_addr;
+        socklen_t cli_len = sizeof(cli_addr);
+
+        int client_fd = accept(listen_fd, (struct sockaddr *)&cli_addr, &cli_len);
         if (client_fd < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
             perror("accept");
-            break;
+            continue;
         }
 
-        char ip_str[INET_ADDRSTRLEN] = {0};
-        inet_ntop(AF_INET, &client_addr.sin_addr, ip_str, sizeof(ip_str));
-        printf("Accepted connection from %s\n", ip_str);
-
-        line_len = 0;
-        ssize_t bytes_read;
-        while ((bytes_read = read(client_fd, recv_buffer, sizeof(recv_buffer))) > 0) {
-            for (ssize_t i = 0; i < bytes_read; ++i) {
-                char ch = recv_buffer[i];
-                if (ch == '\n') {
-                    line_buffer[line_len] = '\0';
-                    handle_line(line_buffer, ip_str);
-                    line_len = 0;
-                } else if (line_len + 1 < sizeof(line_buffer)) {
-                    line_buffer[line_len++] = ch;
-                }
-            }
+        struct client_info *info = malloc(sizeof(*info));
+        if (!info) {
+            perror("malloc");
+            close(client_fd);
+            continue;
         }
 
-        if (line_len > 0) {
-            line_buffer[line_len] = '\0';
-            handle_line(line_buffer, ip_str);
-            line_len = 0;
+        info->sock = client_fd;
+        inet_ntop(AF_INET, &cli_addr.sin_addr,
+                  info->ip, sizeof(info->ip));
+
+        pthread_t tid;
+        if (pthread_create(&tid, NULL, client_thread, info) != 0) {
+            perror("pthread_create");
+            close(client_fd);
+            free(info);
+            continue;
         }
 
-        close(client_fd);
+        pthread_detach(tid);
     }
 
-    close(server_fd);
+    close(listen_fd);
+}
+
+int main(int argc, char *argv[]) {
+    const char *port = (argc > 1) ? argv[1] : DEFAULT_PORT;
+    if (storage_init_base("data/clients") != 0) {
+    fprintf(stderr, "Storage init failed\n");
+    return 1;
+}
+    run_server(port);
+
+    storage_cleanup();
     return 0;
 }
