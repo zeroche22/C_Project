@@ -1,19 +1,30 @@
-CC       ?= gcc
-CFLAGS   ?= -Wall -Wextra -std=c11 -O2
-CPPFLAGS ?= -Iinclude
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c11 -Iinclude -pthread
+LDFLAGS = -pthread
 
-SERVER_OBJS = src/server.c src/analysis.c src/tcp_main.c
-HTTP_OBJS   = src/http.c src/analysis.c src/http_main.c
+SRC = \
+src/server.c \
+src/client_handler.c \
+src/storage.c \
+src/analysis.c \
+src/key_decoder.c
 
-all: tcp_server http_server
+OBJ = $(SRC:.c=.o)
 
-tcp_server: $(SERVER_OBJS)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $^ -o $@
+TARGET = json_server
 
-http_server: $(HTTP_OBJS)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $^ -o $@
+all: $(TARGET)
+
+$(TARGET): $(OBJ)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJ) $(LDFLAGS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f tcp_server http_server
+	rm -f $(OBJ) $(TARGET)
 
-.PHONY: all clean
+run: all
+	./$(TARGET)
+
+.PHONY: all clean run

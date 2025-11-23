@@ -1,6 +1,6 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-int start_tcp_server(void);
+void run_server(const char *port);
 
-#endif // SERVER_H
+#endif
