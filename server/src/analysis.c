@@ -1,119 +1,60 @@
-#include <errno.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "analysis.h"
+#include "storage.h"
 
-#define DATA_DIR "data"
+#define CONTEXT_SIZE 20
 
-static char *escape_json(const char *text) {
-    size_t len = strlen(text);
-    size_t capacity = len * 2 + 1;
-    char *escaped = malloc(capacity);
-    if (!escaped) {
-        return NULL;
-    }
-
-    size_t out = 0;
-    for (size_t i = 0; i < len; ++i) {
-        char ch = text[i];
-        switch (ch) {
-            case '\\':
-            case '"':
-                escaped[out++] = '\\';
-                escaped[out++] = ch;
-                break;
-            case '\n':
-                escaped[out++] = '\\';
-                escaped[out++] = 'n';
-                break;
-            case '\r':
-                escaped[out++] = '\\';
-                escaped[out++] = 'r';
-                break;
-            case '\t':
-                escaped[out++] = '\\';
-                escaped[out++] = 't';
-                break;
-            default:
-                escaped[out++] = ch;
-                break;
-        }
-    }
-
-    escaped[out] = '\0';
-    return escaped;
-}
-
-char *extract_context(const char *message, size_t position, size_t radius) {
-    if (!message) {
-        return NULL;
-    }
-
-    size_t len = strlen(message);
-    if (position > len) {
-        return NULL;
-    }
-
-    size_t start = (position > radius) ? position - radius : 0;
-    size_t end = position + radius;
-    if (end > len) {
-        end = len;
-    }
-
-    size_t out_len = end - start + 1; // include char at position
-    char *context = malloc(out_len + 1);
-    if (!context) {
-        return NULL;
-    }
-
-    memcpy(context, message + start, out_len);
-    context[out_len] = '\0';
-    return context;
-}
-
-void save_match_context(const char *ip, const char *message) {
-    if (!ip || !message) {
+void analyze_text_and_store(const char *ip, int index, const char *text) {
+    if (!ip || !text)
         return;
+
+    size_t len = strlen(text);
+
+    char *result = malloc(len * 2);
+    if (!result)
+        return;
+
+    result[0] = '\0';
+    strcat(result, "{ \"matches\": [");
+
+    int found = 0;
+
+    for (size_t i = 0; i < len; i++) {
+        if (text[i] == '@') {
+            int start = (i > CONTEXT_SIZE) ? (i - CONTEXT_SIZE) : 0;
+            int end = (i + CONTEXT_SIZE < len) ? (i + CONTEXT_SIZE) : len - 1;
+
+            char snippet[64];
+            int s = 0;
+
+            for (int j = start; j <= end && s < 60; j++) {
+                char c = text[j];
+                if (c == '\n') c = ' ';
+                snippet[s++] = c;
+            }
+            snippet[s] = '\0';
+
+            if (found > 0)
+                strcat(result, ", ");
+
+            strcat(result, "\"");
+            strcat(result, snippet);
+            strcat(result, "\"");
+
+            found++;
+        }
     }
 
-    size_t len = strlen(message);
-    for (size_t i = 0; i < len; ++i) {
-        if (message[i] != '@') {
-            continue;
-        }
+    char tail[128];
+    snprintf(tail, sizeof(tail),
+             "], \"total_matches\": %d }\n", found);
 
-        char *context = extract_context(message, i, 20);
-        if (!context) {
-            continue;
-        }
+    strcat(result, tail);
 
-        char *escaped_context = escape_json(context);
-        char *escaped_message = escape_json(message);
-        if (!escaped_context || !escaped_message) {
-            free(context);
-            free(escaped_context);
-            free(escaped_message);
-            continue;
-        }
+    storage_save_analysis(ip, index, result, strlen(result));
 
-        char path[256];
-        snprintf(path, sizeof(path), "%s/%s_matches.json", DATA_DIR, ip);
-        FILE *fp = fopen(path, "a");
-        if (!fp) {
-            perror("fopen match file");
-            free(context);
-            free(escaped_context);
-            free(escaped_message);
-            continue;
-        }
-
-        fprintf(fp, "{\"index\":%zu,\"context\":\"%s\",\"message\":\"%s\"}\n", i, escaped_context, escaped_message);
-        fclose(fp);
-
-        free(context);
-        free(escaped_context);
-        free(escaped_message);
-    }
+    free(result);
 }

@@ -1,9 +1,6 @@
 #ifndef ANALYSIS_H
 #define ANALYSIS_H
 
-#include <stddef.h>
+void analyze_text_and_store(const char *ip, int index, const char *text);
 
-char *extract_context(const char *message, size_t position, size_t radius);
-void save_match_context(const char *ip, const char *message);
-
-#endif // ANALYSIS_H
+#endif
