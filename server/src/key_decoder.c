@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 
 #include "key_decoder.h"
 
@@ -17,6 +18,9 @@ static void append_key(char *buffer, size_t *len, size_t max_len,
     else if (strcmp(key, "BACKSPACE") == 0) {
         if (*len > 0)
             (*len)--;
+    }
+    else if (strcmp(key, "SHIFT") == 0) {
+        return;
     }
     else {
         size_t klen = strlen(key);
@@ -42,7 +46,7 @@ void extract_text_from_json(const char *json, char *out, size_t out_size) {
         if (!p) break;
         p++;
 
-        while (*p == ' ' || *p == '\"')
+        while (*p && (isspace((unsigned char)*p) || *p == '"'))
             p++;
 
         char key[32];
