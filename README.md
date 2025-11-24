@@ -13,6 +13,7 @@ Two-part keylogger written in C: a Windows client that captures keystrokes and a
 - `keylogger/` — Windows client: `main/main_keylogger.c`, bundled `cJSON` sources, `Makefile` producing `main/main_keylogger.exe`.
 - `server/` — POSIX server: socket listener with threaded client handling, storage, key decoding, and analysis helpers plus `Makefile` for `json_server`.
 
+```
 keylogger/
 ├── include/
 │   ├── cJSON.h
@@ -42,7 +43,7 @@ keylogger/
 │
 ├── .gitignore
 └── README.md
-
+```
 
 ## How It Works
 1. **Client hook & buffering**: `keylogger/main/main_keylogger.c` installs a low-level keyboard hook (WinAPI `WH_KEYBOARD_LL`). Pressed keys are normalized (letters, digits, special keys like `SPACE`, `ENTER`, `BACKSPACE`) and appended to an in-memory ring (max 30 entries).
