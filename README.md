@@ -6,13 +6,33 @@
 - Lapukhov Darii
 
 ## Overview
-Two-part keylogger written in C: a Windows client that captures keystrokes and a server that stores and analyzes the captured events. The client serializes keystrokes to JSON, saves them locally, and streams the same payload to the server over TCP. The server keeps raw payloads per client and runs a simple text analyzer to surface interesting snippets.
+Two-part keylogger written in C: a Windows client captures keystrokes and streams JSON payloads to a server. The server stores raw events per client and runs a lightweight analyzer to surface interesting snippets.
+
+## Architecture (high level)
+```
+Windows client
+  hook (WH_KEYBOARD_LL) 
+  buffer 
+  JSON (keys+timestamps)
+  local file (keylog_*.json)
+  TCP send to server
+
+server
+  listener (TCP 8080) 
+  thread per client 
+  storage (data/clients/<ip>/raw/*.json)
+  key_decoder (JSON → text)
+  analysis (find '@' contexts)
+  results (data/clients/<ip>/analysis/*_result.json)
+```
+
+## Environment Setup
+**Client (Windows)**
+- Build with MinGW-w64 or MSVC that provides Winsock2 headers/libs.
+- Update `SERVER_IP` and `SERVER_PORT` in `keylogger/main/main_keylogger.c`.
+- Use a shell with `make` support (MinGW/MSYS or similar) and ensure `-lws2_32` links.
 
 ## Repository Structure
-- `README.md` — project description and usage notes.
-- `keylogger/` — Windows client: `main/main_keylogger.c`, bundled `cJSON` sources, `Makefile` producing `main/main_keylogger.exe`.
-- `server/` — POSIX server: socket listener with threaded client handling, storage, key decoding, and analysis helpers plus `Makefile` for `json_server`.
-
 ```
 keylogger/
 ├── include/
@@ -38,6 +58,8 @@ keylogger/
 │   │   ├── key_decoder.c
 │   │   ├── server.c
 │   │   └── storage.c
+│   ├── tests/
+│   │   ├── test_all.cpp
 │   │
 │   └── Makefile
 │
@@ -45,26 +67,38 @@ keylogger/
 └── README.md
 ```
 
-## How It Works
-1. **Client hook & buffering**: `keylogger/main/main_keylogger.c` installs a low-level keyboard hook (WinAPI `WH_KEYBOARD_LL`). Pressed keys are normalized (letters, digits, special keys like `SPACE`, `ENTER`, `BACKSPACE`) and appended to an in-memory ring (max 30 entries).
-2. **Flush to JSON**: On buffer fill or shutdown, the client builds a JSON object with an array of `{ "key": "<KEY>", "time": "<YYYY-MM-DD HH:MM:SS>" }` entries, writes it to a timestamped file (`keylog_<date>_<time>.json`), and sends the same string to the server. Connection details are set via `SERVER_IP` and `SERVER_PORT` macros.
-3. **Server ingest**: `server/json_server` listens on TCP port 8080 by default. Each client connection runs in its own thread. Every received JSON payload is saved under `data/clients/<ip>/raw/<index>.json`, where `<ip>` is the client address and `<index>` is an incrementing counter per client.
-4. **Decoding & analysis**: The server extracts readable text from the JSON keys (handling spacing, newlines, backspaces, and ignoring shift markers). It then scans the reconstructed text for `@` symbols, capturing surrounding context for quick inspection. Results are written to `data/clients/<ip>/analysis/<index>_result.json`.
-
 ## Building & Running
-- **Server (Linux/macOS):**
-  - Build and run:  
-    ```sh
-    cd server
-    make run
-    ```
-  - Change the port by passing an argument: `./json_server 9000`.
-  - Server data lives under `data/clients/`.
-- **Client (Windows):**
-  - Build with MinGW or MSVC toolchain that provides Winsock2 headers/libraries:  
-    ```sh
-    cd keylogger
-    make
-    ```
-  - Set `SERVER_IP`/`SERVER_PORT` in `keylogger/main/main_keylogger.c` to point at your server.
-  - Run `main/main_keylogger.exe`; it will log to local JSON files and stream to the server if reachable.
+**Server**
+```sh
+cd server
+make
+./json_server
+```
+Server data is written under `data/clients/`.
+
+**Run tests**
+```sh
+cd server
+make test
+```
+
+**Client**
+```sh
+cd keylogger
+make
+./main/main_keylogger.exe
+```
+The client writes `keylog_<date>_<time>.json` locally and sends the same payload to the server if reachable.
+
+## Key Modules and Functions
+- `server/src/server.c`: `run_server(port)` validates/binds/listens; spawns `pthread` per connection; `main` sets up storage and starts the loop.
+- `server/src/client_handler.c`: `handle_client(sock, ip)` receives JSON chunks, picks next index, saves raw payload, decodes text, and triggers analysis; closes the socket on exit.
+- `server/src/storage.c`: manages `data/clients/<ip>/raw` and `analysis` directories; `storage_get_next_index` inspects existing files; `storage_save_raw`/`storage_save_analysis` write numbered files.
+- `server/src/key_decoder.c`: `extract_text_from_json(json, out, out_size)` walks `"key"` fields, handling `SPACE`, `ENTER`, `BACKSPACE`, ignoring `SHIFT`, and truncating safely.
+- `server/src/analysis.c`: `analyze_text_and_store(ip, index, text)` scans decoded text for `@`, captures surrounding context, JSON-escapes snippets, and stores results with a match count.
+
+## Key Implementation Details
+- File layout per client: `data/clients/<ip>/raw/%04d.json` and `data/clients/<ip>/analysis/%04d_result.json`, where the index increments from existing files.
+- Backspace handling mutates the in-memory buffer before saving analysis, mirroring user corrections.
+- The analyzer throttles adjacent `@` matches (skips if closer than 5 chars) to reduce noise.
+- Tests (`server/tests/test_all.cpp`) cover key decoding, storage indexing/saving, and the analysis output format.
